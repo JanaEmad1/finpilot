@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Secrets — never commit API keys
+.env
+
+# Generated / large files (recreated by scripts)
+data/*.db
+models/
+hf_cache/
