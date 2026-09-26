@@ -12,3 +12,4 @@ data/*.db
 models/
 hf_cache/
 data/banking77/
+logs/

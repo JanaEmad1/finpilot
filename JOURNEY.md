@@ -199,3 +199,57 @@ phrases like "in May" or "May 2026", and a test checks this.)
 - For template data, a *random* split is not enough; split by template.
 - Honest caveat we keep: template sentences are easier than real customer messages, so we will
   report the account-intent accuracy **separately** from Banking77.
+
+(Small slip at the end of step 3: the downloaded dataset CSVs were accidentally committed
+with the code. They are downloaded by the script, so they don't belong in the repo. The commit
+had not been pushed yet, so we amended it and added `data/banking77/` to `.gitignore`.)
+
+---
+
+## Step 4 — Statistics toolkit and a simple baseline model
+
+**What we did:**
+- Wrote `eval/stats.py`, the statistics used to decide if a model is "good enough to release":
+  - **Bootstrap confidence intervals** — resample the test set 2,000 times to see how much a
+    score could move just by luck. We report `0.915 [0.905, 0.924]` instead of just `91.5%`.
+  - **McNemar test** — compares two models on the *same* questions, looking only at the
+    questions where they disagree.
+  - **Power analysis** — how many test questions we need to detect a difference of a given size.
+  - **Calibration**: *ECE* (does "90% confident" really mean right 90% of the time?) and
+    **temperature scaling**, a one-number fix for over- or under-confident models.
+  - **Coverage vs. accuracy** — if the bot only answers when it's confident enough, how many
+    messages does it answer, and how accurate is it on those?
+- 7 tests for the statistics, using simulated data where we *know* the right answer
+  (e.g. we generate data with temperature 2.5 and check that we recover about 2.5).
+- Trained a **baseline**: TF-IDF features + logistic regression (`finpilot/intent/baseline.py`).
+  It trains in about 76 seconds. Any fancy model has to beat this to be worth it.
+- Wrote `eval/eval_intent.py`, which writes `reports/intent_eval.md`.
+
+**Baseline results (test set):**
+- Banking77 accuracy **0.915 [0.905, 0.924]** — surprisingly strong for such a simple model.
+- Our account intents: **0.917 [0.861, 0.963]** — note the much wider interval: only 108 test
+  examples, so we know this number much less precisely.
+- Calibration surprise: the best temperature was **0.72**, i.e. below 1. The model was
+  *under*-confident (neural networks are usually the opposite). Calibration brought the error
+  (ECE) from 0.072 down to **0.010**.
+- **Hand-off rule:** we picked the confidence threshold on the *validation* set to reach 97%
+  accuracy. On the test set it held: the bot answers **84.5%** of messages at **97.3%**
+  accuracy and passes the rest to a human.
+
+**Problems we hit:**
+1. Printing the report crashed on Windows:
+   ```
+   UnicodeEncodeError: 'charmap' codec can't encode character '→'
+   ```
+   The Windows console uses an old text encoding (cp1252) that has no "→" arrow.
+   The report *file* was fine (we write it as UTF-8); only printing failed.
+   **Fix:** `sys.stdout.reconfigure(encoding="utf-8")` at the start of the script.
+2. The A/B test printed **"p-value: 0"**. A probability is never exactly zero — the real
+   value was just smaller than the smallest number a computer float can store.
+   **Fix:** print `< 1e-300` in that case.
+
+**What we learned:**
+- Always start with a simple baseline. Here it set a high bar (91.5%).
+- A number without an uncertainty range can mislead — 108 examples vs. 3,080 examples give
+  very different certainty even at the same accuracy.
+- Tune thresholds and calibration on validation data, then check them **once** on test.
