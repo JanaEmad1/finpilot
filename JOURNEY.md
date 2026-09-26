@@ -253,3 +253,164 @@ had not been pushed yet, so we amended it and added `data/banking77/` to `.gitig
 - A number without an uncertainty range can mislead — 108 examples vs. 3,080 examples give
   very different certainty even at the same accuracy.
 - Tune thresholds and calibration on validation data, then check them **once** on test.
+
+---
+
+## Step 5 — Fine-tuning DistilBERT (and making training fast enough on a laptop)
+
+**What we did:**
+- Wrote `finpilot/intent/train.py`: fine-tunes **DistilBERT** (a smaller, faster version of BERT)
+  on our 80 intents with a plain PyTorch training loop — AdamW optimiser, learning-rate warm-up
+  then linear decay, gradient clipping, and we keep the epoch with the best **validation**
+  accuracy (never choosing by test score).
+- The laptop has no usable GPU, so everything trains on the CPU.
+
+**Problems we hit:**
+1. **Training was far too slow.** After 6 minutes it had not finished 50 steps — it was heading
+   for 2+ hours. The cause: we padded *every* sentence to 64 tokens, but the sentences are short:
+   ```
+   tokens per sentence: mean 16.1, p95 36, max 98, share >64: 0.0029
+   ```
+   About **75% of the computation was spent on padding** (empty filler tokens).
+   **Fix:** *dynamic padding* — each batch is only padded to its own longest sentence.
+2. It was still slow (6.8 s/step). Instead of guessing, we **measured** (`scripts/bench_training.py`):
+
+   | Setup | seconds per step |
+   |---|---|
+   | pad to 64, 12 threads (original) | 3.71 |
+   | pad to 64, 10 threads | 3.32 |
+   | dynamic padding, 12 threads | 2.85 |
+   | **dynamic padding, 10 threads** | **2.51** |
+
+   Two surprises:
+   - The CPU (Intel i7-1255U) has 10 physical cores but 12 "logical" ones. Using all 12 threads
+     was *slower* than 10 — the extra hyper-threads just add overhead.
+   - The benchmark (3.71 s) was much faster than the 6.8 s we saw during real training. The reason
+     was us: we ran evaluations and a demo **at the same time** as training, and they fought over the CPU.
+   **Fix:** dynamic padding + 10 threads (a new `--threads` option), and leave the CPU alone while training.
+3. Small one: running the benchmark as `python scripts/bench_training.py` failed with
+   `ModuleNotFoundError: No module named 'finpilot'`, because running a file directly doesn't add the
+   project folder to Python's import path. **Fix:** run it as a module, `python -m scripts.bench_training`.
+
+**What we learned:**
+- **Measure before optimising.** A two-minute benchmark beat guessing and gave a 1.5× speed-up.
+- Padding is not free — look at your real sequence lengths.
+- "Use all the cores" is not always fastest, especially on laptop chips with mixed core types.
+- Don't benchmark (or train) while other heavy jobs are running.
+
+**Result of training:** 3 epochs took **68 minutes**. Validation accuracy went 76.4% → 87.7% →
+**89.7%** — about the same as the baseline (89.6%). Real speed during training was 4–6 s/step,
+slower than the 2.5 s/step in the short benchmark; a laptop chip usually slows down under a long,
+heavy load, so short benchmarks are optimistic.
+
+---
+
+## Step 6 — The results, and a release decision we did not expect
+
+**What we did:** Evaluated both models on the test set (3,188 messages) with the statistics from
+step 4, and re-ran the retrieval A/B test.
+
+**Intent results:**
+
+| Model | Banking77 accuracy | Account intents | Bot answers (at 97% target) |
+|---|---|---|---|
+| TF-IDF + logistic regression | **0.915** [0.905, 0.924] | 0.917 | **84.5%** of messages |
+| DistilBERT (3 CPU epochs) | 0.903 [0.893, 0.913] | 0.852 | 79.0% of messages |
+
+- Is DistilBERT really better? **No — it is significantly *worse*.** Paired difference
+  **−1.3 points [−2.4, −0.3]**, exact McNemar test **p = 0.011**. The whole confidence interval is
+  below zero, so this is not bad luck.
+- Why? Most likely it is **under-trained**: only 3 epochs (published Banking77 results usually train
+  longer, on GPUs). A clue: its best temperature was 0.73 (below 1), meaning it is still
+  *under-confident* — typical of a network that hasn't finished learning.
+
+**Problem we hit — the big one:** our code would have **shipped the worse model anyway**.
+`load_intent_model()` used DistilBERT automatically whenever its folder existed, because "fine-tuned
+transformer" *sounds* better. Nothing checked the numbers.
+
+**How we fixed it:** a **champion / challenger** rule. After evaluation, a new model replaces the
+current one ("champion") only if it is **significantly better** (whole CI above zero and p < 0.05).
+The decision is saved, and the app serves whatever the evaluation chose. Today that is the baseline.
+There is also a **release gate** (`eval/gate.py`, run in CI) that fails the build if a model's
+accuracy — judged by the *lower end* of its confidence interval — drops below a minimum bar.
+
+**Retrieval A/B test:** routing a question to an article by its predicted intent (B) beat plain
+TF-IDF search (A): **0.909 vs 0.526** top-1 accuracy, +38 points [+36.6, +40.0], p < 1e-300.
+We state the caveat openly: it's not a fair fight (B learned from ~9,000 labelled questions, A from
+none), so the size of the gap is the interesting part, not that B wins.
+
+**What we learned:**
+- **Bigger / newer is not automatically better.** A simple model with good features can beat a
+  transformer that is trained on a small budget.
+- The value of a release process is that it can say **"no"** — here it stopped us from shipping a
+  model that was worse, which we would otherwise have done without noticing.
+- A negative result, measured properly, is still a result worth publishing.
+- Next thing to try: train DistilBERT for more epochs (ideally on a GPU, e.g. free Google Colab) and
+  let the same statistical test decide again.
+
+---
+
+## Step 7 — Guardrails, the agent, the LLM and the API
+
+**What we did:**
+- `finpilot/guardrails.py` — hides personal data (card numbers, IBANs, emails, phone numbers,
+  CVV codes) **before** the message reaches the model, the LLM or the logs, and flags obvious
+  prompt-injection attempts ("ignore previous instructions...", "show another customer's balance").
+  Card numbers are confirmed with the **Luhn checksum** (the check digit every real card number
+  has), so random long numbers like order ids are left alone.
+- `finpilot/llm.py` — calls **Gemini** over plain HTTPS to write the final reply. The LLM gets
+  only the facts (tool results or the article) and strict rules. If there is no API key, or
+  Gemini is down, we use a template answer instead, so the chat never breaks.
+- `finpilot/agent.py` — the "brain": guardrails → intent → (not confident? hand off to a human)
+  → SQL tool or help article → reply. For a lost or stolen card it also offers to freeze the
+  cards, and only does it after the customer says "yes".
+- A **number check**: every number in the LLM's reply must appear in the facts; otherwise the
+  reply is thrown away and the template is used. A made-up amount is the worst mistake a bank
+  assistant can make.
+- `finpilot/api.py` — FastAPI with `POST /chat` and `GET /health`. It logs the decision,
+  confidence and speed of every chat, but **never the raw message** (it could contain personal data).
+- 12 new tests. The agent tests use a tiny keyword "model" so they run offline in milliseconds.
+
+**Problems we hit:**
+1. A test failed: an order number (`1234567890123`) was hidden as a **phone number**.
+   The card rule correctly skipped it (it fails the Luhn check), but the phone rule treated
+   *any* long run of digits as a phone number.
+   **Fix:** phones must look like phones — start with `+`, or with `0`, or be written in groups
+   like `555-123-4567`. Added tests for real phone formats.
+2. A bug caught while reading my own code, before any test ran: the number check first
+   used `"100".rstrip(".0")`, which turns **100 into 1** (it strips *every* trailing 0 and dot).
+   An LLM saying "1 payment" would have "matched" a fact of "100 payments".
+   **Fix:** compare numbers as real numbers (`1,234.50` → `1234.50`), and a test for exactly this case.
+3. The end-to-end demo showed a real weakness: *"how long does an international transfer take?"*
+   was handed to a human, because the baseline model was only 53% sure — it could not decide
+   between `pending_transfer` and `transfer_timing`, two Banking77 intents that overlap.
+   This is the hand-off rule doing its job (better to ask a human than guess), but it is also a
+   sign the model needs to be better on similar intents — one reason to try a transformer.
+4. Running the demo *changed the demo database*: saying "yes" really froze customer 7's cards.
+   That is correct behaviour, but it means the database should be rebuilt before a clean demo
+   (`python -m finpilot.data.generate`).
+
+**What we learned:**
+- Safety comes mainly from **architecture** (the LLM can't run SQL or take actions by itself),
+  and only secondarily from filters. Filters like regexes are easy to get too broad or too narrow.
+- Re-read small "clever" string tricks — `rstrip` does not do what it looks like it does.
+- An end-to-end demo finds different problems than unit tests do.
+
+---
+
+## Step 8 — Packaging: Docker, CI and the README
+
+**What we did:**
+- `Dockerfile` + `docker-compose.yml`: the image installs CPU-only PyTorch (much smaller), builds
+  the synthetic database and the baseline model, and runs the API.
+- `.github/workflows/ci.yml`: on every push GitHub runs the tests, retrains the baseline, runs the
+  evaluation and the **release gate**, then builds the Docker image and sends a real chat request to it.
+- `README.md`: what the project does, the design decisions, the real results (copied from
+  `reports/`), how to run it, and its limitations.
+- `.env.example` shows where the Gemini key goes; the real `.env` is git-ignored.
+
+**Honest note:** Docker is not installed on this laptop, so the Dockerfile and the CI workflow have
+**not been run yet** at the time of writing. The first push to GitHub will be their first real test —
+if something fails there, it will be recorded here as the next step.
+
+**What we learned:** CI lets a free cloud machine test things (like Docker) that the laptop can't.
