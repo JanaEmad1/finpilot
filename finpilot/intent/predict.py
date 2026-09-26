@@ -70,9 +70,15 @@ CALIBRATION_FILE = config.MODELS_DIR / "calibration.json"
 
 @lru_cache(maxsize=1)
 def load_intent_model() -> IntentModel:
-    """Prefer the fine-tuned transformer; fall back to the baseline."""
-    from finpilot.intent.train import OUT_DIR
-    model: IntentModel = TransformerIntentModel() if OUT_DIR.exists() else BaselineIntentModel()
-    if CALIBRATION_FILE.exists():
-        model.temperature = json.loads(CALIBRATION_FILE.read_text()).get(model.name, {}).get("temperature", 1.0)
+    """Serve the "champion" chosen by eval/eval_intent.py.
+
+    A model is NOT used just because it exists: the first version preferred DistilBERT
+    whenever its folder was present, which would have shipped the statistically WORSE
+    model (see JOURNEY.md step 6).
+    """
+    saved = json.loads(CALIBRATION_FILE.read_text()) if CALIBRATION_FILE.exists() else {}
+    champion = saved.get("champion", BaselineIntentModel.name)
+    model: IntentModel = (TransformerIntentModel() if champion == TransformerIntentModel.name
+                          else BaselineIntentModel())
+    model.temperature = saved.get(model.name, {}).get("temperature", 1.0)
     return model

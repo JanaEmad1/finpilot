@@ -111,6 +111,16 @@ def main() -> None:
                   f"{stats.mcnemar_sample_size(max(p_disc, 0.011), 0.01):,} paired test messages "
                   f"(we have {n_test:,})."]
 
+    # Champion / challenger: the fine-tuned model replaces the baseline ONLY if it is
+    # significantly better (whole paired CI above zero AND McNemar p < 0.05).
+    champion = results[0]["name"]
+    if len(results) == 2:
+        promote = diff.low > 0 and test["p_value"] < 0.05
+        champion = results[1]["name"] if promote else results[0]["name"]
+        lines += ["", f"**Release decision: serve `{champion}`.** " + (
+            f"{results[1]['name']} is significantly better." if promote else
+            f"{results[1]['name']} is not significantly better, so the simpler model stays in production.")]
+
     config.REPORTS_DIR.mkdir(exist_ok=True)
     (config.REPORTS_DIR / "intent_eval.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (config.REPORTS_DIR / "intent_metrics.json").write_text(json.dumps({r["name"]: {
@@ -119,7 +129,8 @@ def main() -> None:
     } for r in results}, indent=2))
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
     CALIBRATION_FILE.write_text(json.dumps(
-        {r["name"]: {"temperature": r["temperature"], "threshold": r["threshold"]} for r in results}, indent=2))
+        {"champion": champion,
+         **{r["name"]: {"temperature": r["temperature"], "threshold": r["threshold"]} for r in results}}, indent=2))
     print("\n".join(lines))
 
 
