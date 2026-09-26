@@ -132,3 +132,70 @@ phrases like "in May" or "May 2026", and a test checks this.)
   (min / max / counts) before building on top of it.
 - When you fix a bug, add a test that would have caught it.
 - Know your distributions: mean ≠ median for skewed data like money.
+
+---
+
+## Step 3 — The help centre and the intent dataset
+
+**What we did:**
+- Wrote **18 help-centre articles** (`finpilot/kb/*.md`) for a made-up bank called FinPilot:
+  lost cards, refunds, transfers, top-ups, exchange rates, fees, identity checks, and so on.
+  The policies are invented for the demo — they are not any real bank's rules.
+- Each article lists which customer **intents** it answers. Together they cover all 77
+  intents of **Banking77**, a public dataset of 13,083 real-style banking questions labelled
+  with 77 intents (e.g. `card_arrival`, `lost_or_stolen_card`). A test checks that every
+  intent belongs to exactly one article.
+  Bonus: this gives us **free ground truth** for testing search later — if the question is
+  labelled `card_arrival`, we know which article is the right answer.
+- Wrote `finpilot/rag.py` — a TF-IDF keyword search over the articles.
+- Added **3 intents of our own** for questions about the customer's own data:
+  `balance_query`, `spending_query`, `recent_transactions` (these go to the SQL tools, not
+  to an article). They are generated from sentence templates.
+- Split the data into **train / validation / test**. Banking77 has no validation set, so we
+  hold out 10% of train. Validation is for tuning (calibration, thresholds); the test set is
+  touched only for the final numbers.
+
+**Problems we hit:**
+
+1. The normal way to load the dataset failed:
+   ```
+   RuntimeError: Dataset scripts are no longer supported, but found banking77.py
+   ```
+   New versions of the Hugging Face `datasets` library no longer run the loading scripts
+   that older datasets use.
+
+2. The "converted to Parquet" version didn't exist either:
+   ```
+   DatasetNotFoundError: Revision 'refs/convert/parquet' doesn't exist for dataset 'PolyAI/banking77'
+   ```
+
+3. A popular copy on Hugging Face (`mteb/banking77`) loaded fine — but it had
+   **9,993 / 3,076** rows, while the official dataset has **10,003 / 3,080**. Someone had
+   changed it. Using it would make our numbers impossible to compare with published results.
+
+4. Our own synthetic examples had two bugs, found by checking the data, not by tests:
+   - **Data leakage:** 22 of the 120 synthetic test sentences were *also* in the training set.
+     We removed duplicates, but "Check my balance" and "check my balance" counted as different.
+     A model tested on sentences it already saw looks better than it really is.
+   - **Too few examples:** templates with no blanks to fill (like "check my balance") can only
+     make one sentence, so one intent ended up with just 22 training examples.
+
+**How we fixed it:**
+- Read the official loading script to find where the data really comes from, and downloaded
+  the **original CSV files from PolyAI's GitHub**. Checked them: 10,003 / 3,080 rows, 77 intents,
+  no duplicates, and **no test sentence appears in train**.
+- Leakage: compare sentences after **normalising** them (lowercase, no punctuation), and split
+  the synthetic data **by template** — whole templates are kept only for the test set, so test
+  sentences use wording the model has never seen. Added a regression test for it.
+- Too few examples: added natural openers and endings ("hey", "could you check", "thanks") to
+  every template. Now each account intent has 86–97 training examples (Banking77 classes have
+  32–168), and 36 test examples each.
+
+**What we learned:**
+- Popular dataset copies can be silently modified. Go back to the original source and
+  **check the row counts against the paper**.
+- **Data leakage is easy to create and hard to see.** Always check whether test examples also
+  appear in train — after normalising the text.
+- For template data, a *random* split is not enough; split by template.
+- Honest caveat we keep: template sentences are easier than real customer messages, so we will
+  report the account-intent accuracy **separately** from Banking77.

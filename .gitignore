@@ -11,3 +11,4 @@ __pycache__/
 data/*.db
 models/
 hf_cache/
+data/banking77/
