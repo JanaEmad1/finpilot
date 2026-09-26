@@ -115,8 +115,9 @@ Freezing cards changes data, so it always asks "are you sure?" first.
    Its **average is bigger than its median** (average = median × e^(σ²/2)). Using the
    median to estimate monthly spending would under-count it by about 20%.
 
-3. A tiny detail for the tests: "may" is both a month and a verb ("may I see my spending?").
-   The period parser only treats it as a month in phrases like "in May" or "May 2026".
+(A design detail, not a bug we hit: "may" is both a month and a verb — "may I see my
+spending?". We planned for it from the start: the parser only treats it as a month in
+phrases like "in May" or "May 2026", and a test checks this.)
 
 **How we fixed it:**
 - Spending is now tied to income: each customer spends 40–90% of their salary.
