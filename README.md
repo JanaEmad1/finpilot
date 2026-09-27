@@ -1,5 +1,7 @@
 # FinPilot
 
+[![CI](https://github.com/JanaEmad1/finpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/JanaEmad1/finpilot/actions/workflows/ci.yml)
+
 **An LLM banking assistant with a statistically evaluated release process.**
 
 FinPilot answers customer questions for a (fictional) digital bank: *"How much did I spend

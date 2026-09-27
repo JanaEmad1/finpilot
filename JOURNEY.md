@@ -443,3 +443,8 @@ always on the import path, no matter how pytest is started. Ran plain `pytest` l
   command locally.
 - Know your tool's exit codes: pytest's exit code 1 = tests failed, 4 = pytest itself couldn't start.
 - This is exactly why CI exists — it caught a problem that our local setup was hiding.
+
+**Result after pushing the fix:** the whole CI pipeline passed on GitHub — unit tests, baseline
+training, evaluation, the release gate, **and** the Docker build with a real chat request sent to the
+running container. That closes the "not run yet" note from step 8: the Dockerfile worked on its
+first real run, even though it was written on a laptop without Docker.
