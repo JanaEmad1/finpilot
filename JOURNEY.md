@@ -414,3 +414,32 @@ none), so the size of the gap is the interesting part, not that B wins.
 if something fails there, it will be recorded here as the next step.
 
 **What we learned:** CI lets a free cloud machine test things (like Docker) that the laptop can't.
+
+---
+
+## Step 9 — The first CI run on GitHub failed
+
+**What happened:** After pushing to GitHub, the very first CI step failed:
+```
+Unit tests (offline, no API keys needed)
+Process completed with exit code 4.
+```
+Exit code 4 from pytest means it crashed *before running any test*. We reproduced it on the
+laptop by running `pytest` exactly like CI does:
+```
+ImportError while loading conftest 'tests/conftest.py'.
+E   ModuleNotFoundError: No module named 'finpilot'
+```
+
+**Why:** On the laptop we always ran `python -m pytest`, and that form quietly adds the current
+folder to Python's import path. CI runs plain `pytest`, which does **not** — so Python could not
+find our own `finpilot` package. The tests "passed on my machine" only because of *how* we started them.
+
+**How we fixed it:** Added a small `pytest.ini` with `pythonpath = .`, so the project folder is
+always on the import path, no matter how pytest is started. Ran plain `pytest` locally: 33 passed.
+
+**What we learned:**
+- "Works on my machine" often hides a difference in *how* the command is run. Reproduce CI's exact
+  command locally.
+- Know your tool's exit codes: pytest's exit code 1 = tests failed, 4 = pytest itself couldn't start.
+- This is exactly why CI exists — it caught a problem that our local setup was hiding.
