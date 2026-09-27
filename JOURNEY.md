@@ -14,25 +14,26 @@ Each step uses the same shape:
 
 ---
 
-## Step 0 — Choosing the project
+## Step 0 — The idea
 
-**What we did:** Read the Revolut *Deep Learning Engineer (LLM/NLP)* job description and
-compared it with my existing projects (hospital chatbot, Distill, multimodal speaker ID,
-EquiMonitor thesis).
+**The problem:** Banks get huge numbers of customer messages: "Where is my card?",
+"How much did I spend on food last month?", "My card was stolen!". Many are simple and repetitive,
+so an AI assistant could answer them instantly. But a bank assistant must be **trustworthy**: it
+must never invent a number, show one customer another customer's data, or act without permission.
 
-**Why:** No single project covered everything the job asks for: a fine-tuned NLP model,
-an LLM assistant, SQL, production tools, *and* probability & statistics.
-
-**Decision:** Build **FinPilot** — a banking chat assistant that:
-- understands what the customer wants (a fine-tuned intent classifier),
-- answers questions about their own account (safe SQL tools),
+**The idea:** Build **FinPilot**, a banking chat assistant that:
+- understands what the customer wants (an intent classifier, including a fine-tuned transformer),
+- answers questions about the customer's own account (safe SQL tools),
 - answers help-centre questions (retrieval / RAG),
-- writes friendly replies with an LLM (Gemini),
-- and is **evaluated with statistics** (confidence intervals, calibration, A/B tests)
-  before anything is "released".
+- writes friendly replies with an LLM (Gemini), using only facts it was given,
+- and hands the conversation to a human when it is not sure.
 
-**What we learned:** The statistics part is what most portfolio LLM projects skip, so
-it is the part that makes this one stand out.
+**The twist:** many LLM demos stop at "it works on my examples". FinPilot also asks *"how do we
+know it's good enough to release?"*, and answers with statistics: confidence intervals,
+calibration, significance tests and A/B tests. A model only goes live if the numbers support it.
+
+**What we learned (before writing any code):** Being clear about what "good enough" means
+shapes the whole design: the evaluation is part of the product, not an afterthought.
 
 ---
 
