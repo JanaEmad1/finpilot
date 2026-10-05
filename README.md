@@ -4,6 +4,8 @@
 
 **An LLM banking assistant with a statistically evaluated release process.**
 
+<p align="center"><img src="docs/demo.png" width="640" alt="FinPilot answering spending, balance and lost-card questions, refusing a prompt injection and handing off when unsure"></p>
+
 FinPilot answers customer questions for a (fictional) digital bank: *"How much did I spend
 on groceries last month?"*, *"My card was stolen"*, *"Why was I charged an exchange fee?"*.
 It uses an intent classifier (a TF-IDF baseline vs. a fine-tuned DistilBERT, with the
